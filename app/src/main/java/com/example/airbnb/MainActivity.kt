@@ -3,20 +3,22 @@ package com.example.airbnb
 import android.graphics.Color
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import android.util.Log
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import androidx.viewpager2.widget.ViewPager2
+import androidx.viewpager2.widget.ViewPager2.OnPageChangeCallback
 import com.example.airbnb.databinding.ActivityMainBinding
+import com.example.airbnb.databinding.BottomSheetBinding
 import com.naver.maps.geometry.LatLng
-import com.naver.maps.map.CameraUpdate
-import com.naver.maps.map.LocationTrackingMode
-import com.naver.maps.map.MapView
-import com.naver.maps.map.NaverMap
-import com.naver.maps.map.OnMapReadyCallback
+import com.naver.maps.map.*
 import com.naver.maps.map.overlay.Marker
+import com.naver.maps.map.overlay.Overlay
 import com.naver.maps.map.util.FusedLocationSource
 import com.naver.maps.map.util.MarkerIcons
+import com.naver.maps.map.widget.LocationButtonView
 import retrofit2.*
 import retrofit2.converter.gson.GsonConverterFactory
-class MainActivity : AppCompatActivity(), OnMapReadyCallback {
+class MainActivity : AppCompatActivity(), OnMapReadyCallback, Overlay.OnClickListener {
 
     private lateinit var naverMap: NaverMap
     private lateinit var locationSource: FusedLocationSource
@@ -24,6 +26,17 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private val mapView: MapView by lazy {
         binding.mapView
     }
+    private val viewPager: ViewPager2 by lazy {
+        binding.houseViewPager
+    }
+    private val recyclerView: RecyclerView by lazy {
+        findViewById(R.id.recyclerView)
+    }
+    private val currentLocationButton: LocationButtonView by lazy {
+        findViewById(R.id.currentLocationButton)
+    }
+    private val viewPagerAdapter = HouseViewPagerAdapter()
+    private val recyclerAdapter = HouseListAdapter()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,6 +46,21 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         mapView.onCreate(savedInstanceState)
         mapView.getMapAsync(this)
 
+        viewPager.adapter = viewPagerAdapter
+        recyclerView.adapter = recyclerAdapter
+        recyclerView.layoutManager = LinearLayoutManager(this)
+
+        viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback(){
+            override fun onPageSelected(position: Int) {
+                super.onPageSelected(position)
+
+                val selectedHouseModel = viewPagerAdapter.currentList[position]
+                val cameraUpdate = CameraUpdate.scrollTo(LatLng(selectedHouseModel.lat, selectedHouseModel.lng))
+                    .animate(CameraAnimation.Easing)
+
+                naverMap.moveCamera(cameraUpdate)
+            }
+        })
     }
 
     override fun onMapReady(map: NaverMap) {
@@ -41,11 +69,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         naverMap.maxZoom = 18.0 // 최대 줌
         naverMap.minZoom = 10.0 // 최소 줌
 
-        val cameraUpdate = CameraUpdate.scrollTo(LatLng(37.497898550942466, 127.02768639039702))
+        val cameraUpdate = CameraUpdate.scrollTo(LatLng(37.497898550942466, 127.02768639039702)) // 초기 화면 설정
         naverMap.moveCamera(cameraUpdate)
 
         val uiSetting = naverMap.uiSettings // 현위치 버튼
-        uiSetting.isLocationButtonEnabled = true // 현위치 버튼 활성화
+        uiSetting.isLocationButtonEnabled = false // 현위치 버튼 활성화..
+        currentLocationButton.map = naverMap // 현위치 버튼 위치 재설정
 
         // 현위치 사용 권한을 받고 onRequestPermissionsResult()로 승인이 되면 현위치 기능 사용 가능
         locationSource = FusedLocationSource(this@MainActivity, LOCATION_PERMISSION_REQUEST_CODE)
@@ -63,13 +92,15 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         retrofit.create(HouseService::class.java).also {
             it.getHouseList()
                 .enqueue(object : Callback<HouseDto>{
-                    override fun onResponse(call: Call<HouseDto>, response: Response<HouseDto>) { //성공 처리
+                    override fun onResponse(call: Call<HouseDto>, response: Response<HouseDto>) { // 성공 처리
                         if(response.isSuccessful.not()){
                             return
                         }
 
                         response.body()?.let { dto ->
                             updateMarker(dto.items)
+                            viewPagerAdapter.submitList(dto.items)
+                            recyclerAdapter.submitList(dto.items)
                         }
                     }
 
@@ -85,6 +116,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         houses.forEach{ house -> 
             val marker = Marker()
             marker.position = LatLng(house.lat, house.lng)
+            marker.onClickListener = this
             marker.map = naverMap
             marker.tag = house.id
             marker.icon = MarkerIcons.BLACK
@@ -148,5 +180,19 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     companion object{
         private const val LOCATION_PERMISSION_REQUEST_CODE = 1000
+    }
+
+    override fun onClick(overlay: Overlay): Boolean {
+        overlay.tag
+
+        val selectedModel = viewPagerAdapter.currentList.firstOrNull(){
+            it.id == overlay.tag
+        }
+
+        selectedModel?.let{
+            val position = viewPagerAdapter.currentList.indexOf(it)
+            viewPager.currentItem = position
+        }
+        return true
     }
 }
